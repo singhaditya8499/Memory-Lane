@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MemoryLane</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <h1>MemoryLane</h1>
+      <p>Track trips, routes, people, and every stop in one timeline map.</p>
+    </header>
+
+    <main class="layout">
+      <section class="panel form-panel">
+        <h2>Add Journey</h2>
+        <form id="journeyForm">
+          <label>Trip Title<input name="title" required /></label>
+          <label>Description<textarea name="description"></textarea></label>
+
+          <div class="grid-2">
+            <label>Start Date<input name="startDate" type="date" required /></label>
+            <label>End Date<input name="endDate" type="date" /></label>
+          </div>
+
+          <label>How We Went<input name="transportMode" placeholder="Car, Train, Flight..." /></label>
+
+          <label>Route Summary<textarea name="routeSummary" placeholder="Highway 1 via Big Sur"></textarea></label>
+          <label>Who Went (comma-separated)<input name="companions" placeholder="Ava, Liam, Noah" /></label>
+
+          <div class="subsection">
+            <div class="subhead">
+              <h3>Stops</h3>
+              <button type="button" id="addStopBtn">+ Add Stop</button>
+            </div>
+            <p class="hint">Start destination and end destination are mandatory. Add extra stops in between as needed.</p>
+            <p class="hint">Duration is auto-calculated from start departure time to end arrival time.</p>
+            <p class="hint">Use "Pick On Map" and click the map, or search a place name and select result.</p>
+            <div id="stopsContainer"></div>
+          </div>
+
+          <button class="primary" type="submit">Save Journey</button>
+          <p id="statusMsg" class="status"></p>
+        </form>
+      </section>
+
+      <section class="panel timeline-panel">
+        <h2>Journey Timeline Map</h2>
+        <div id="map"></div>
+        <div id="timeline"></div>
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/js/app.js"></script>
+  </body>
+</html>

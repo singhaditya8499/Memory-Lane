@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Journey Details - MemoryLane</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&display=swap" rel="stylesheet" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="hero">
+      <h1>Journey Details</h1>
+      <p><a href="/">Back to timeline</a></p>
+    </header>
+
+    <main class="layout single-column">
+      <section class="panel">
+        <h2 id="journeyTitle">Loading...</h2>
+        <p id="journeyMeta" class="timeline-meta"></p>
+        <p id="journeyPeople" class="timeline-meta"></p>
+        <p id="journeyRoute"></p>
+      </section>
+
+      <section class="panel">
+        <h2>Journey Route</h2>
+        <div id="journeyMap"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Stops</h2>
+        <div id="stopsDetail"></div>
+      </section>
+
+      <section class="panel">
+        <h2>Add Stop In Between</h2>
+        <form id="insertStopForm">
+          <label>Insert Before Stop
+            <select id="insertBeforeIndex" required></select>
+          </label>
+          <label>Stop Name<input id="newStopName" required /></label>
+          <label>Stop Type
+            <select id="newStopType">
+              <option value="restaurant">Restaurant</option>
+              <option value="loo_stop">Loo Stop</option>
+              <option value="shopping_stop">Shopping Stop</option>
+              <option value="tourist_stop">Tourist Stop</option>
+              <option value="hotel_stop">Hotel Stop</option>
+              <option value="fuel_stop">Fuel Stop</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+
+          <div class="location-row">
+            <button type="button" id="pickNewStopLocationBtn" class="pick-location-btn">Pick On Map</button>
+            <span id="newStopLocationPreview" class="location-preview">No map point selected</span>
+          </div>
+          <div class="location-search-row">
+            <input id="newStopSearchInput" placeholder="Search place (e.g., Times Square, NYC)" />
+            <button type="button" id="searchNewStopBtn" class="search-location-btn">Search</button>
+          </div>
+          <select id="newStopSearchResults" class="location-results">
+            <option value="">Search results will appear here</option>
+          </select>
+
+          <input type="hidden" id="newStopLat" />
+          <input type="hidden" id="newStopLng" />
+
+          <div class="grid-2">
+            <label>Arrived At<input id="newStopArrivedAt" type="datetime-local" /></label>
+            <label>Departed At<input id="newStopDepartedAt" type="datetime-local" /></label>
+          </div>
+          <label>Notes<textarea id="newStopNotes"></textarea></label>
+          <label>Stop Photos (optional, multiple)
+            <input id="newStopPhotos" type="file" accept="image/*" multiple />
+          </label>
+
+          <button type="submit" class="primary">Insert Stop</button>
+          <p id="insertStopStatus" class="status"></p>
+        </form>
+      </section>
+    </main>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="/js/journey.js"></script>
+  </body>
+</html>
