@@ -131,6 +131,38 @@ function computeDurationMinutesFromStops(stops) {
   return Math.round((endArrived - startDeparted) / 60000);
 }
 
+function ensureValidJourneyStops(stops) {
+  if (!Array.isArray(stops) || stops.length < 2) {
+    throw new Error('Journey must include start and end destinations.');
+  }
+
+  const start = stops[0];
+  const end = stops[stops.length - 1];
+  if (!start.departed_at) {
+    throw new Error('Start destination must include departure time.');
+  }
+  if (!end.arrived_at) {
+    throw new Error('End destination must include arrival time.');
+  }
+
+  const startDeparted = new Date(start.departed_at).getTime();
+  const endArrived = new Date(end.arrived_at).getTime();
+  if (Number.isNaN(startDeparted) || Number.isNaN(endArrived) || endArrived < startDeparted) {
+    throw new Error('Invalid start/end timestamps for journey duration.');
+  }
+}
+
+function reindexAndNormalizeStops(stops) {
+  const lastIndex = stops.length - 1;
+  return stops.map((item, idx) => ({
+    ...item,
+    order_index: idx,
+    arrived_at: idx === 0 ? null : item.arrived_at || null,
+    departed_at: idx === lastIndex ? null : item.departed_at || null,
+    photos: Array.isArray(item.photos) ? item.photos : []
+  }));
+}
+
 function toListItem(id, journey) {
   return {
     id,
@@ -182,6 +214,24 @@ function parseInsertStopPayload(req) {
     insertBeforeIndex,
     stop
   };
+}
+
+function parseUpdateStopPayload(req) {
+  const raw = req.body.payload;
+  if (!raw) {
+    throw new Error('Missing payload JSON.');
+  }
+
+  const parsed = JSON.parse(raw);
+  const stop = parsed.stop;
+  if (!stop || !stop.name || stop.latitude === undefined || stop.longitude === undefined) {
+    throw new Error('Stop must include name and map location.');
+  }
+  if (Number.isNaN(Number(stop.latitude)) || Number.isNaN(Number(stop.longitude))) {
+    throw new Error('Stop has invalid map coordinates.');
+  }
+
+  return { stop };
 }
 
 router.post('/', upload.any(), async (req, res) => {
@@ -269,11 +319,8 @@ router.patch('/:id/stops', upload.any(), async (req, res) => {
       const updatedStops = [...existingStops];
       updatedStops.splice(insertBeforeIndex, 0, insertedStop);
 
-      const reindexedStops = updatedStops.map((item, idx) => ({
-        ...item,
-        order_index: idx
-      }));
-
+      const reindexedStops = reindexAndNormalizeStops(updatedStops);
+      ensureValidJourneyStops(reindexedStops);
       const totalDurationMinutes = computeDurationMinutesFromStops(reindexedStops);
       const now = Date.now();
 
@@ -294,6 +341,130 @@ router.patch('/:id/stops', upload.any(), async (req, res) => {
       success: true,
       message: 'Stop inserted successfully.',
       stopsCount: result.stopsCount
+    });
+  } catch (error) {
+    const status = error.message === 'Journey not found.' ? 404 : 400;
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+router.patch('/:id/stops/:index', upload.any(), async (req, res) => {
+  try {
+    const journeyId = req.params.id;
+    const stopIndex = Number(req.params.index);
+    const { stop } = parseUpdateStopPayload(req);
+    const addedPhotos = (req.files || []).map((file) => `/uploads/${file.filename}`);
+
+    if (!Number.isInteger(stopIndex)) {
+      throw new Error('Stop index must be an integer.');
+    }
+
+    await db.runTransaction(async (transaction) => {
+      const journeyRef = db.collection(collections.journeys).doc(journeyId);
+      const snapshot = await transaction.get(journeyRef);
+
+      if (!snapshot.exists) {
+        throw new Error('Journey not found.');
+      }
+
+      const journey = snapshot.data();
+      const existingStops = Array.isArray(journey.stops) ? journey.stops : [];
+      if (stopIndex < 0 || stopIndex >= existingStops.length) {
+        throw new Error('Stop index out of range.');
+      }
+
+      const current = existingStops[stopIndex];
+      const updated = {
+        ...current,
+        name: stop.name,
+        stop_type: stop.stopType || current.stop_type || 'other',
+        latitude: Number(stop.latitude),
+        longitude: Number(stop.longitude),
+        arrived_at: stop.arrivedAt !== undefined ? stop.arrivedAt || null : current.arrived_at || null,
+        departed_at: stop.departedAt !== undefined ? stop.departedAt || null : current.departed_at || null,
+        notes: stop.notes !== undefined ? stop.notes || null : current.notes || null,
+        photos: [...(Array.isArray(current.photos) ? current.photos : []), ...addedPhotos]
+      };
+
+      const updatedStops = [...existingStops];
+      updatedStops[stopIndex] = updated;
+      const reindexedStops = reindexAndNormalizeStops(updatedStops);
+      ensureValidJourneyStops(reindexedStops);
+
+      const totalDurationMinutes = computeDurationMinutesFromStops(reindexedStops);
+      const now = Date.now();
+
+      transaction.update(journeyRef, {
+        stops: reindexedStops,
+        total_duration_minutes: totalDurationMinutes,
+        start_destination: reindexedStops[0],
+        end_destination: reindexedStops[reindexedStops.length - 1],
+        updated_at: now
+      });
+    });
+
+    res.json({
+      success: true,
+      message: 'Stop updated successfully.'
+    });
+  } catch (error) {
+    const status = error.message === 'Journey not found.' ? 404 : 400;
+    res.status(status).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+router.delete('/:id/stops/:index', async (req, res) => {
+  try {
+    const journeyId = req.params.id;
+    const stopIndex = Number(req.params.index);
+
+    if (!Number.isInteger(stopIndex)) {
+      throw new Error('Stop index must be an integer.');
+    }
+
+    await db.runTransaction(async (transaction) => {
+      const journeyRef = db.collection(collections.journeys).doc(journeyId);
+      const snapshot = await transaction.get(journeyRef);
+
+      if (!snapshot.exists) {
+        throw new Error('Journey not found.');
+      }
+
+      const journey = snapshot.data();
+      const existingStops = Array.isArray(journey.stops) ? journey.stops : [];
+      if (existingStops.length <= 2) {
+        throw new Error('Cannot delete stop: journey must retain start and end destinations.');
+      }
+      if (stopIndex <= 0 || stopIndex >= existingStops.length - 1) {
+        throw new Error('Only in-between stops can be deleted.');
+      }
+
+      const updatedStops = [...existingStops];
+      updatedStops.splice(stopIndex, 1);
+
+      const reindexedStops = reindexAndNormalizeStops(updatedStops);
+      ensureValidJourneyStops(reindexedStops);
+      const totalDurationMinutes = computeDurationMinutesFromStops(reindexedStops);
+      const now = Date.now();
+
+      transaction.update(journeyRef, {
+        stops: reindexedStops,
+        total_duration_minutes: totalDurationMinutes,
+        start_destination: reindexedStops[0],
+        end_destination: reindexedStops[reindexedStops.length - 1],
+        updated_at: now
+      });
+    });
+
+    res.json({
+      success: true,
+      message: 'Stop deleted successfully.'
     });
   } catch (error) {
     const status = error.message === 'Journey not found.' ? 404 : 400;

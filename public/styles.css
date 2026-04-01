@@ -258,6 +258,68 @@ button {
   border: 1px solid var(--line);
 }
 
+.stop-item {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.6rem;
+  margin-top: 0.6rem;
+  background: #fff;
+}
+
+.stop-item-head {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.stop-item-head h3 {
+  margin: 0;
+}
+
+.stop-item-summary .timeline-meta {
+  margin: 0.2rem 0 0;
+}
+
+.stop-inline-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.stop-inline-actions button {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.82rem;
+  border-radius: 8px;
+}
+
+.toggle-stop-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  font-weight: 700;
+}
+
+.edit-stop-btn,
+.cancel-inline-edit-btn {
+  border: 1px solid var(--line);
+  background: #f3f4f6;
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 0.5rem 0.7rem;
+  font-weight: 700;
+}
+
+.stop-item-body {
+  margin-top: 0.75rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.75rem;
+}
+
+.is-hidden {
+  display: none;
+}
+
 @media (max-width: 980px) {
   .layout {
     grid-template-columns: 1fr;
@@ -267,4 +329,18 @@ button {
   #timeline {
     max-height: none;
   }
+}
+
+.danger-btn {
+  border: none;
+  background: #9b2226;
+  color: #fff;
+  border-radius: 10px;
+  padding: 0.5rem 0.7rem;
+  font-weight: 800;
+}
+
+.danger-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }

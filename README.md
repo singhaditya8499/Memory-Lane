@@ -20,6 +20,7 @@ MemoryLane is a trip tracking app with map timeline, stop-level details, optiona
   - optional multi-photo uploads per stop
 - Search journeys by person name.
 - Open a full details page for each journey from timeline.
+- In single journey view, update any stop details, append photos, and delete in-between stops.
 - Map route rendering by transport:
   - `car`/`driving`: road-following route using free OSRM demo service
   - `flight`/`plane`/`air`: curved arc route
@@ -59,6 +60,7 @@ npm start
 
 7. Open app:
 - [http://localhost:3000](http://localhost:3000)
+- Same Wi-Fi devices: `http://<your-local-ip>:3000`
 
 ## Firestore Security Rules
 
@@ -74,6 +76,11 @@ If you also build direct client-side Firestore access later, start with restrict
 - `PATCH /api/journeys/:id/stops` (multipart/form-data)
   - `payload`: JSON with `insertBeforeIndex` and `stop`
   - `stopPhoto` optional images for the inserted stop
+- `PATCH /api/journeys/:id/stops/:index` (multipart/form-data)
+  - `payload`: JSON with updated `stop`
+  - `stopPhoto` optional images to append to existing stop photos
+- `DELETE /api/journeys/:id/stops/:index`
+  - deletes an in-between stop and reorders remaining stops
 - `GET /api/journeys`
 - `GET /api/journeys?person=<namePrefix>`
 - `GET /api/journeys/:id`

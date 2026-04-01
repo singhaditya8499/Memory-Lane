@@ -8,6 +8,7 @@ const journeyRoutes = require('./routes/journeys');
 
 const app = express();
 const port = process.env.PORT || 3000;
+const host = process.env.HOST || '0.0.0.0';
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -20,6 +21,9 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(port, () => {
-  console.log(`MemoryLane app running at http://localhost:${port}`);
+app.listen(port, host, () => {
+  const localUrl = `http://localhost:${port}`;
+  const networkHint = `http://<your-local-ip>:${port}`;
+  console.log(`MemoryLane app running at ${localUrl}`);
+  console.log(`LAN access enabled on ${networkHint}`);
 });

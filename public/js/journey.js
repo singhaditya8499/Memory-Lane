@@ -3,6 +3,7 @@ const journeyMeta = document.getElementById('journeyMeta');
 const journeyPeople = document.getElementById('journeyPeople');
 const journeyRoute = document.getElementById('journeyRoute');
 const stopsDetail = document.getElementById('stopsDetail');
+
 const insertStopForm = document.getElementById('insertStopForm');
 const insertBeforeIndexSelect = document.getElementById('insertBeforeIndex');
 const insertStopStatus = document.getElementById('insertStopStatus');
@@ -26,78 +27,43 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors'
 }).addTo(map);
 
+let currentJourney = null;
 let journeyLayers = [];
 let addStopMarker = null;
-let isPickingNewStopLocation = false;
+const editMarkers = new Map();
+let pickMode = null; // { type: 'add' } | { type: 'edit', index: number }
 
 function getJourneyId() {
   const params = new URLSearchParams(window.location.search);
   const id = (params.get('id') || '').trim();
-  return id ? id : null;
+  return id || null;
 }
 
-function stopCardHtml(stop, index) {
-  const photos = (stop.photos || [])
-    .map((path, photoIndex) => `<img src="${path}" alt="${stop.name} photo ${photoIndex + 1}" class="stop-photo" />`)
-    .join('');
-
-  return `
-    <article class="timeline-card">
-      <h3>${index + 1}. ${stop.name}</h3>
-      <p class="timeline-meta">Type: ${stop.stop_type || 'other'}</p>
-      <p class="timeline-meta">Location: ${stop.latitude}, ${stop.longitude}</p>
-      <p class="timeline-meta">Arrived: ${stop.arrived_at || 'N/A'} | Departed: ${stop.departed_at || 'N/A'}</p>
-      <p>${stop.notes || ''}</p>
-      <p class="timeline-meta">Photos: ${(stop.photos || []).length}</p>
-      <div class="stop-photos-grid">${photos || '<p class="timeline-meta">No photos added.</p>'}</div>
-    </article>
-  `;
+function escapeHtml(text) {
+  return String(text || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 function toIso(value) {
   return value ? new Date(value).toISOString() : null;
 }
 
-async function searchPlace(query) {
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(query)}`;
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json'
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error('Unable to search location right now.');
+function toLocalInputValue(isoValue) {
+  if (!isoValue) {
+    return '';
   }
 
-  return response.json();
-}
-
-function renderSearchResults(results) {
-  const options = ['<option value="">Choose a search result</option>'];
-  results.forEach((item) => {
-    const optionValue = `${item.lat},${item.lon}`;
-    const label = item.display_name.replace(/"/g, '&quot;');
-    options.push(`<option value="${optionValue}">${label}</option>`);
-  });
-  newStopSearchResults.innerHTML = options.join('');
-}
-
-function setNewStopLocation(lat, lng) {
-  newStopLat.value = Number(lat).toFixed(6);
-  newStopLng.value = Number(lng).toFixed(6);
-  newStopLocationPreview.textContent = `Selected: ${newStopLat.value}, ${newStopLng.value}`;
-
-  if (addStopMarker) {
-    map.removeLayer(addStopMarker);
+  const date = new Date(isoValue);
+  if (Number.isNaN(date.getTime())) {
+    return '';
   }
 
-  addStopMarker = L.circleMarker([lat, lng], {
-    radius: 7,
-    color: '#9b2226',
-    fillColor: '#ca6702',
-    fillOpacity: 0.9
-  }).addTo(map);
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return local.toISOString().slice(0, 16);
 }
 
 function normalizeTransportMode(mode) {
@@ -188,6 +154,180 @@ async function buildMapRoutePoints(basePoints, transportMode) {
   return basePoints;
 }
 
+async function searchPlace(query) {
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(query)}`;
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error('Unable to search location right now.');
+  }
+
+  return response.json();
+}
+
+function renderSearchResults(selectEl, results) {
+  const options = ['<option value="">Choose a search result</option>'];
+  results.forEach((item) => {
+    const optionValue = `${item.lat},${item.lon}`;
+    const label = escapeHtml(item.display_name);
+    options.push(`<option value="${optionValue}">${label}</option>`);
+  });
+  selectEl.innerHTML = options.join('');
+}
+
+function setNewStopLocation(lat, lng) {
+  newStopLat.value = Number(lat).toFixed(6);
+  newStopLng.value = Number(lng).toFixed(6);
+  newStopLocationPreview.textContent = `Selected: ${newStopLat.value}, ${newStopLng.value}`;
+
+  if (addStopMarker) {
+    map.removeLayer(addStopMarker);
+  }
+
+  addStopMarker = L.circleMarker([lat, lng], {
+    radius: 7,
+    color: '#9b2226',
+    fillColor: '#ca6702',
+    fillOpacity: 0.9
+  }).addTo(map);
+}
+
+function setInlineEditLocation(stopIndex, lat, lng) {
+  const card = stopsDetail.querySelector(`[data-stop-index="${stopIndex}"]`);
+  if (!card) {
+    return;
+  }
+
+  const latField = card.querySelector('.inline-edit-lat');
+  const lngField = card.querySelector('.inline-edit-lng');
+  const preview = card.querySelector('.inline-edit-location-preview');
+  if (!latField || !lngField || !preview) {
+    return;
+  }
+
+  latField.value = Number(lat).toFixed(6);
+  lngField.value = Number(lng).toFixed(6);
+  preview.textContent = `Selected: ${latField.value}, ${lngField.value}`;
+
+  if (editMarkers.has(stopIndex)) {
+    map.removeLayer(editMarkers.get(stopIndex));
+  }
+
+  const marker = L.circleMarker([lat, lng], {
+    radius: 7,
+    color: '#1d3557',
+    fillColor: '#457b9d',
+    fillOpacity: 0.9
+  }).addTo(map);
+  editMarkers.set(stopIndex, marker);
+}
+
+function clearAllEditMarkers() {
+  editMarkers.forEach((marker) => map.removeLayer(marker));
+  editMarkers.clear();
+}
+
+function renderStopItem(stop, index, totalStops) {
+  const isStart = index === 0;
+  const isEnd = index === totalStops - 1;
+  const role = isStart ? 'Start' : isEnd ? 'End' : 'In-between';
+  const shortNote = stop.notes ? stop.notes : 'No notes';
+  const photos = (stop.photos || [])
+    .map((path, photoIndex) => `<img src="${path}" alt="${escapeHtml(stop.name)} photo ${photoIndex + 1}" class="stop-photo" />`)
+    .join('');
+
+  return `
+    <article class="stop-item" data-stop-index="${index}">
+      <div class="stop-item-head">
+        <button type="button" class="toggle-stop-btn">Show</button>
+        <div class="stop-item-summary">
+          <h3>${index + 1}. ${escapeHtml(stop.name)}</h3>
+          <p class="timeline-meta">${escapeHtml(shortNote)}</p>
+        </div>
+        <div class="stop-inline-actions">
+          <button type="button" class="edit-stop-btn">Edit</button>
+          <button type="button" class="danger-btn delete-stop-btn" ${isStart || isEnd ? 'disabled' : ''}>
+            Delete
+          </button>
+        </div>
+      </div>
+
+      <div class="stop-item-body is-hidden">
+        <p class="timeline-meta">Role: ${role} | Type: ${escapeHtml(stop.stop_type || 'other')}</p>
+        <p class="timeline-meta">Location: ${stop.latitude}, ${stop.longitude}</p>
+        <p class="timeline-meta">Arrived: ${stop.arrived_at || 'N/A'} | Departed: ${stop.departed_at || 'N/A'}</p>
+        <div class="stop-photos-grid">${photos || '<p class="timeline-meta">No photos added.</p>'}</div>
+
+        <form class="inline-edit-form is-hidden" data-stop-index="${index}">
+          <p class="hint">${isStart ? 'Start stop: arrival is ignored, departure required.' : isEnd ? 'End stop: departure is ignored, arrival required.' : 'In-between stop: all fields editable.'}</p>
+          <label>Stop Name<input class="inline-edit-name" value="${escapeHtml(stop.name)}" required /></label>
+          <label>Stop Type
+            <select class="inline-edit-type">
+              <option value="restaurant" ${stop.stop_type === 'restaurant' ? 'selected' : ''}>Restaurant</option>
+              <option value="loo_stop" ${stop.stop_type === 'loo_stop' ? 'selected' : ''}>Loo Stop</option>
+              <option value="shopping_stop" ${stop.stop_type === 'shopping_stop' ? 'selected' : ''}>Shopping Stop</option>
+              <option value="tourist_stop" ${stop.stop_type === 'tourist_stop' ? 'selected' : ''}>Tourist Stop</option>
+              <option value="hotel_stop" ${stop.stop_type === 'hotel_stop' ? 'selected' : ''}>Hotel Stop</option>
+              <option value="fuel_stop" ${stop.stop_type === 'fuel_stop' ? 'selected' : ''}>Fuel Stop</option>
+              <option value="other" ${(!stop.stop_type || stop.stop_type === 'other') ? 'selected' : ''}>Other</option>
+            </select>
+          </label>
+
+          <div class="location-row">
+            <button type="button" class="pick-location-btn pick-inline-stop-location-btn" data-stop-index="${index}">Pick On Map</button>
+            <span class="location-preview inline-edit-location-preview">Selected: ${Number(stop.latitude).toFixed(6)}, ${Number(stop.longitude).toFixed(6)}</span>
+          </div>
+          <div class="location-search-row">
+            <input class="inline-location-search-input" placeholder="Search place" />
+            <button type="button" class="search-location-btn search-inline-stop-location-btn">Search</button>
+          </div>
+          <select class="location-results inline-location-search-results">
+            <option value="">Search results will appear here</option>
+          </select>
+
+          <input type="hidden" class="inline-edit-lat" value="${Number(stop.latitude).toFixed(6)}" />
+          <input type="hidden" class="inline-edit-lng" value="${Number(stop.longitude).toFixed(6)}" />
+
+          <div class="grid-2">
+            <label>Arrived At
+              <input class="inline-edit-arrived" type="datetime-local" value="${toLocalInputValue(stop.arrived_at)}" ${isStart ? 'disabled' : ''} ${isEnd ? 'required' : ''} />
+            </label>
+            <label>Departed At
+              <input class="inline-edit-departed" type="datetime-local" value="${toLocalInputValue(stop.departed_at)}" ${isEnd ? 'disabled' : ''} ${isStart ? 'required' : ''} />
+            </label>
+          </div>
+          <label>Notes<textarea class="inline-edit-notes">${escapeHtml(stop.notes || '')}</textarea></label>
+          <label>Add Photos (optional, multiple)
+            <input class="inline-edit-photos" type="file" accept="image/*" multiple />
+          </label>
+
+          <div class="grid-2">
+            <button type="submit" class="primary">Save Changes</button>
+            <button type="button" class="cancel-inline-edit-btn">Cancel</button>
+          </div>
+          <p class="status inline-edit-status"></p>
+        </form>
+      </div>
+    </article>
+  `;
+}
+
+function renderStopsList(stops) {
+  stopsDetail.innerHTML = stops.map((stop, index) => renderStopItem(stop, index, stops.length)).join('');
+}
+
+function populateInsertPositionOptions(stops) {
+  const options = ['<option value="">Select position</option>'];
+  for (let i = 1; i < stops.length; i += 1) {
+    options.push(`<option value="${i}">Before Stop #${i + 1}: ${escapeHtml(stops[i].name)}</option>`);
+  }
+  insertBeforeIndexSelect.innerHTML = options.join('');
+}
+
 async function renderJourneyOnMap(journey) {
   journeyLayers.forEach((layer) => map.removeLayer(layer));
   journeyLayers = [];
@@ -204,20 +344,11 @@ async function renderJourneyOnMap(journey) {
   journey.spots.forEach((spot, idx) => {
     const marker = L.marker([spot.latitude, spot.longitude])
       .addTo(map)
-      .bindPopup(`<strong>${spot.name}</strong><br/>Stop #${idx + 1}<br/>Photos: ${(spot.photos || []).length}`);
+      .bindPopup(`<strong>${escapeHtml(spot.name)}</strong><br/>Stop #${idx + 1}<br/>Photos: ${(spot.photos || []).length}`);
     journeyLayers.push(marker);
   });
 
   map.fitBounds(routePoints, { padding: [20, 20] });
-}
-
-function populateInsertPositionOptions(spots) {
-  const options = ['<option value="">Select position</option>'];
-  for (let i = 1; i < spots.length; i += 1) {
-    const stop = spots[i];
-    options.push(`<option value="${i}">Before Stop #${i + 1}: ${stop.name}</option>`);
-  }
-  insertBeforeIndexSelect.innerHTML = options.join('');
 }
 
 async function loadJourney() {
@@ -233,33 +364,45 @@ async function loadJourney() {
     return;
   }
 
-  const journey = await res.json();
+  currentJourney = await res.json();
 
-  journeyTitle.textContent = journey.title;
-  journeyMeta.textContent = `${journey.start_date}${journey.end_date ? ` to ${journey.end_date}` : ''} | ${journey.transport_mode || 'N/A'} | ${journey.total_duration_minutes || 'N/A'} mins`;
-  journeyPeople.textContent = `People: ${journey.companions.join(', ') || 'Solo'}`;
-  const startName = journey.spots[0] ? journey.spots[0].name : 'N/A';
-  const endName = journey.spots.length ? journey.spots[journey.spots.length - 1].name : 'N/A';
-  journeyRoute.textContent = `${journey.route_summary || ''} Start: ${startName} | End: ${endName}`;
-  await renderJourneyOnMap(journey);
-  populateInsertPositionOptions(journey.spots);
+  journeyTitle.textContent = currentJourney.title;
+  journeyMeta.textContent = `${currentJourney.start_date}${currentJourney.end_date ? ` to ${currentJourney.end_date}` : ''} | ${currentJourney.transport_mode || 'N/A'} | ${currentJourney.total_duration_minutes || 'N/A'} mins`;
+  journeyPeople.textContent = `People: ${currentJourney.companions.join(', ') || 'Solo'}`;
+  const startName = currentJourney.spots[0] ? currentJourney.spots[0].name : 'N/A';
+  const endName = currentJourney.spots.length ? currentJourney.spots[currentJourney.spots.length - 1].name : 'N/A';
+  journeyRoute.textContent = `${currentJourney.route_summary || ''} Start: ${startName} | End: ${endName}`;
 
-  stopsDetail.innerHTML = journey.spots.map((stop, index) => stopCardHtml(stop, index)).join('');
+  clearAllEditMarkers();
+  await renderJourneyOnMap(currentJourney);
+  renderStopsList(currentJourney.spots);
+  populateInsertPositionOptions(currentJourney.spots);
 }
 
 map.on('click', (event) => {
-  if (!isPickingNewStopLocation) {
+  if (!pickMode) {
     return;
   }
-  setNewStopLocation(event.latlng.lat, event.latlng.lng);
-  isPickingNewStopLocation = false;
-  pickNewStopLocationBtn.classList.remove('active-pick');
-  insertStopStatus.textContent = 'Location selected for new stop.';
+
+  if (pickMode.type === 'add') {
+    setNewStopLocation(event.latlng.lat, event.latlng.lng);
+    pickMode = null;
+    pickNewStopLocationBtn.classList.remove('active-pick');
+    insertStopStatus.textContent = 'Location selected for new stop.';
+    return;
+  }
+
+  if (pickMode.type === 'edit') {
+    setInlineEditLocation(pickMode.index, event.latlng.lat, event.latlng.lng);
+    pickMode = null;
+    document.querySelectorAll('.pick-inline-stop-location-btn').forEach((btn) => btn.classList.remove('active-pick'));
+  }
 });
 
 pickNewStopLocationBtn.addEventListener('click', () => {
-  isPickingNewStopLocation = true;
+  pickMode = { type: 'add' };
   pickNewStopLocationBtn.classList.add('active-pick');
+  document.querySelectorAll('.pick-inline-stop-location-btn').forEach((btn) => btn.classList.remove('active-pick'));
   insertStopStatus.textContent = 'Click on the map to set the new stop location.';
 });
 
@@ -274,11 +417,11 @@ searchNewStopBtn.addEventListener('click', async () => {
   try {
     const results = await searchPlace(query);
     if (!results.length) {
-      renderSearchResults([]);
+      renderSearchResults(newStopSearchResults, []);
       insertStopStatus.textContent = 'No place found for that search.';
       return;
     }
-    renderSearchResults(results);
+    renderSearchResults(newStopSearchResults, results);
     insertStopStatus.textContent = `Found ${results.length} places. Choose one from dropdown.`;
   } catch (error) {
     insertStopStatus.textContent = error.message || 'Location search failed.';
@@ -299,6 +442,248 @@ newStopSearchResults.addEventListener('change', () => {
   setNewStopLocation(lat, lng);
   map.setView([lat, lng], 13);
   insertStopStatus.textContent = 'Location selected from search.';
+});
+
+stopsDetail.addEventListener('click', async (event) => {
+  const card = event.target.closest('.stop-item');
+  if (!card) {
+    return;
+  }
+
+  const stopIndex = Number(card.dataset.stopIndex);
+  const body = card.querySelector('.stop-item-body');
+
+  if (event.target.closest('.toggle-stop-btn')) {
+    body.classList.toggle('is-hidden');
+    const toggleBtn = card.querySelector('.toggle-stop-btn');
+    toggleBtn.textContent = body.classList.contains('is-hidden') ? 'Show' : 'Hide';
+    if (body.classList.contains('is-hidden')) {
+      const form = card.querySelector('.inline-edit-form');
+      if (form) {
+        form.classList.add('is-hidden');
+      }
+    }
+    return;
+  }
+
+  if (event.target.closest('.edit-stop-btn')) {
+    body.classList.remove('is-hidden');
+    const toggleBtn = card.querySelector('.toggle-stop-btn');
+    toggleBtn.textContent = 'Hide';
+    const form = card.querySelector('.inline-edit-form');
+    if (form) {
+      form.classList.remove('is-hidden');
+    }
+    const status = card.querySelector('.inline-edit-status');
+    if (status) {
+      status.textContent = `Current photos: ${(currentJourney?.spots?.[stopIndex]?.photos || []).length}. New uploads append.`;
+    }
+    return;
+  }
+
+  if (event.target.closest('.cancel-inline-edit-btn')) {
+    const form = card.querySelector('.inline-edit-form');
+    if (form) {
+      form.classList.add('is-hidden');
+    }
+    const status = card.querySelector('.inline-edit-status');
+    if (status) {
+      status.textContent = '';
+    }
+    return;
+  }
+
+  if (event.target.closest('.pick-inline-stop-location-btn')) {
+    pickMode = { type: 'edit', index: stopIndex };
+    document.querySelectorAll('.pick-inline-stop-location-btn').forEach((btn) => btn.classList.remove('active-pick'));
+    const btn = card.querySelector('.pick-inline-stop-location-btn');
+    if (btn) {
+      btn.classList.add('active-pick');
+    }
+    return;
+  }
+
+  if (event.target.closest('.search-inline-stop-location-btn')) {
+    const queryInput = card.querySelector('.inline-location-search-input');
+    const resultsSelect = card.querySelector('.inline-location-search-results');
+    const status = card.querySelector('.inline-edit-status');
+
+    const query = queryInput ? queryInput.value.trim() : '';
+    if (!query) {
+      if (status) {
+        status.textContent = 'Type a place name before searching.';
+      }
+      return;
+    }
+
+    if (status) {
+      status.textContent = 'Searching places...';
+    }
+
+    try {
+      const results = await searchPlace(query);
+      renderSearchResults(resultsSelect, results);
+      if (status) {
+        status.textContent = results.length
+          ? `Found ${results.length} places. Choose one from dropdown.`
+          : 'No place found for that search.';
+      }
+    } catch (error) {
+      if (status) {
+        status.textContent = error.message || 'Location search failed.';
+      }
+    }
+    return;
+  }
+
+  if (event.target.closest('.delete-stop-btn')) {
+    const lastIndex = currentJourney.spots.length - 1;
+    if (stopIndex <= 0 || stopIndex >= lastIndex) {
+      return;
+    }
+
+    const confirmed = window.confirm('Delete this stop? This cannot be undone.');
+    if (!confirmed) {
+      return;
+    }
+
+    const status = card.querySelector('.inline-edit-status');
+    if (status) {
+      status.textContent = 'Deleting stop...';
+    }
+
+    const journeyId = getJourneyId();
+    const response = await fetch(`/api/journeys/${journeyId}/stops/${stopIndex}`, {
+      method: 'DELETE'
+    });
+    const result = await response.json();
+
+    if (!response.ok) {
+      if (status) {
+        status.textContent = result.error || 'Unable to delete stop.';
+      }
+      return;
+    }
+
+    await loadJourney();
+  }
+});
+
+stopsDetail.addEventListener('change', (event) => {
+  const resultsSelect = event.target.closest('.inline-location-search-results');
+  if (!resultsSelect) {
+    return;
+  }
+
+  const card = event.target.closest('.stop-item');
+  if (!card || !resultsSelect.value) {
+    return;
+  }
+
+  const stopIndex = Number(card.dataset.stopIndex);
+  const [lat, lng] = resultsSelect.value.split(',').map((v) => Number(v));
+  if (Number.isNaN(lat) || Number.isNaN(lng)) {
+    return;
+  }
+
+  setInlineEditLocation(stopIndex, lat, lng);
+  map.setView([lat, lng], 13);
+});
+
+stopsDetail.addEventListener('submit', async (event) => {
+  const form = event.target.closest('.inline-edit-form');
+  if (!form) {
+    return;
+  }
+
+  event.preventDefault();
+
+  const card = form.closest('.stop-item');
+  if (!card || !currentJourney) {
+    return;
+  }
+
+  const stopIndex = Number(card.dataset.stopIndex);
+  const status = form.querySelector('.inline-edit-status');
+
+  const name = form.querySelector('.inline-edit-name')?.value.trim();
+  const stopType = form.querySelector('.inline-edit-type')?.value || 'other';
+  const lat = Number(form.querySelector('.inline-edit-lat')?.value);
+  const lng = Number(form.querySelector('.inline-edit-lng')?.value);
+  const arrivedInput = form.querySelector('.inline-edit-arrived');
+  const departedInput = form.querySelector('.inline-edit-departed');
+  const notes = form.querySelector('.inline-edit-notes')?.value || null;
+  const filesInput = form.querySelector('.inline-edit-photos');
+
+  if (!name) {
+    if (status) {
+      status.textContent = 'Stop name is required.';
+    }
+    return;
+  }
+
+  if (Number.isNaN(lat) || Number.isNaN(lng)) {
+    if (status) {
+      status.textContent = 'Location is required.';
+    }
+    return;
+  }
+
+  const lastIndex = currentJourney.spots.length - 1;
+  const arrivedAt = arrivedInput && !arrivedInput.disabled ? toIso(arrivedInput.value) : null;
+  const departedAt = departedInput && !departedInput.disabled ? toIso(departedInput.value) : null;
+
+  if (stopIndex === 0 && !departedAt) {
+    if (status) {
+      status.textContent = 'Start destination requires departure time.';
+    }
+    return;
+  }
+
+  if (stopIndex === lastIndex && !arrivedAt) {
+    if (status) {
+      status.textContent = 'End destination requires arrival time.';
+    }
+    return;
+  }
+
+  const payload = {
+    stop: {
+      name,
+      stopType,
+      latitude: lat,
+      longitude: lng,
+      arrivedAt,
+      departedAt,
+      notes
+    }
+  };
+
+  const formData = new FormData();
+  formData.append('payload', JSON.stringify(payload));
+  Array.from(filesInput?.files || []).forEach((file) => {
+    formData.append('stopPhoto', file);
+  });
+
+  if (status) {
+    status.textContent = 'Saving changes...';
+  }
+
+  const journeyId = getJourneyId();
+  const response = await fetch(`/api/journeys/${journeyId}/stops/${stopIndex}`, {
+    method: 'PATCH',
+    body: formData
+  });
+  const result = await response.json();
+
+  if (!response.ok) {
+    if (status) {
+      status.textContent = result.error || 'Unable to update stop.';
+    }
+    return;
+  }
+
+  await loadJourney();
 });
 
 insertStopForm.addEventListener('submit', async (event) => {
