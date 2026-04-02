@@ -32,6 +32,12 @@ let journeyLayers = [];
 let addStopMarker = null;
 const editMarkers = new Map();
 let pickMode = null; // { type: 'add' } | { type: 'edit', index: number }
+const LOCATION_SEARCH_DEBOUNCE_MS = 350;
+const MIN_LOCATION_QUERY_LENGTH = 2;
+let newStopSearchTimer = null;
+let newStopSearchController = null;
+const inlineSearchTimers = new Map();
+const inlineSearchControllers = new Map();
 
 function getJourneyId() {
   const params = new URLSearchParams(window.location.search);
@@ -154,12 +160,13 @@ async function buildMapRoutePoints(basePoints, transportMode) {
   return basePoints;
 }
 
-async function searchPlace(query) {
+async function searchPlace(query, signal) {
   const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(query)}`;
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json'
-    }
+    },
+    signal
   });
 
   if (!response.ok) {
@@ -177,6 +184,178 @@ function renderSearchResults(selectEl, results) {
     options.push(`<option value="${optionValue}">${label}</option>`);
   });
   selectEl.innerHTML = options.join('');
+}
+
+function resetSearchResults(selectEl, message = 'Search results will appear here') {
+  if (!selectEl) {
+    return;
+  }
+  selectEl.innerHTML = `<option value="">${escapeHtml(message)}</option>`;
+}
+
+function cancelNewStopSearch() {
+  if (newStopSearchTimer) {
+    clearTimeout(newStopSearchTimer);
+    newStopSearchTimer = null;
+  }
+  if (newStopSearchController) {
+    newStopSearchController.abort();
+    newStopSearchController = null;
+  }
+}
+
+function cancelInlineSearch(stopIndex) {
+  if (inlineSearchTimers.has(stopIndex)) {
+    clearTimeout(inlineSearchTimers.get(stopIndex));
+    inlineSearchTimers.delete(stopIndex);
+  }
+  if (inlineSearchControllers.has(stopIndex)) {
+    inlineSearchControllers.get(stopIndex).abort();
+    inlineSearchControllers.delete(stopIndex);
+  }
+}
+
+function clearInlineSearchState() {
+  inlineSearchTimers.forEach((timerId) => clearTimeout(timerId));
+  inlineSearchTimers.clear();
+  inlineSearchControllers.forEach((controller) => controller.abort());
+  inlineSearchControllers.clear();
+}
+
+async function runNewStopSearch(query) {
+  const normalizedQuery = String(query || '').trim();
+  if (!normalizedQuery) {
+    cancelNewStopSearch();
+    resetSearchResults(newStopSearchResults);
+    return;
+  }
+
+  if (normalizedQuery.length < MIN_LOCATION_QUERY_LENGTH) {
+    cancelNewStopSearch();
+    resetSearchResults(newStopSearchResults, `Type at least ${MIN_LOCATION_QUERY_LENGTH} characters to search`);
+    return;
+  }
+
+  if (newStopSearchController) {
+    newStopSearchController.abort();
+  }
+
+  const controller = new AbortController();
+  newStopSearchController = controller;
+  insertStopStatus.textContent = 'Searching places...';
+
+  try {
+    const results = await searchPlace(normalizedQuery, controller.signal);
+    if (newStopSearchController !== controller) {
+      return;
+    }
+
+    if (!results.length) {
+      renderSearchResults(newStopSearchResults, []);
+      insertStopStatus.textContent = 'No place found for that search.';
+      return;
+    }
+
+    renderSearchResults(newStopSearchResults, results);
+    insertStopStatus.textContent = `Found ${results.length} places. Choose one from dropdown.`;
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      return;
+    }
+    insertStopStatus.textContent = error.message || 'Location search failed.';
+  } finally {
+    if (newStopSearchController === controller) {
+      newStopSearchController = null;
+    }
+  }
+}
+
+function scheduleNewStopSearch(query) {
+  if (newStopSearchTimer) {
+    clearTimeout(newStopSearchTimer);
+  }
+  newStopSearchTimer = setTimeout(() => {
+    newStopSearchTimer = null;
+    runNewStopSearch(query);
+  }, LOCATION_SEARCH_DEBOUNCE_MS);
+}
+
+async function runInlineStopSearch(stopIndex, query, resultsSelect, status) {
+  const normalizedQuery = String(query || '').trim();
+  if (!normalizedQuery) {
+    cancelInlineSearch(stopIndex);
+    resetSearchResults(resultsSelect);
+    if (status) {
+      status.textContent = '';
+    }
+    return;
+  }
+
+  if (normalizedQuery.length < MIN_LOCATION_QUERY_LENGTH) {
+    cancelInlineSearch(stopIndex);
+    resetSearchResults(resultsSelect, `Type at least ${MIN_LOCATION_QUERY_LENGTH} characters to search`);
+    if (status) {
+      status.textContent = '';
+    }
+    return;
+  }
+
+  if (!resultsSelect) {
+    return;
+  }
+
+  if (inlineSearchControllers.has(stopIndex)) {
+    inlineSearchControllers.get(stopIndex).abort();
+  }
+
+  const controller = new AbortController();
+  inlineSearchControllers.set(stopIndex, controller);
+
+  if (status) {
+    status.textContent = 'Searching places...';
+  }
+
+  try {
+    const results = await searchPlace(normalizedQuery, controller.signal);
+    if (inlineSearchControllers.get(stopIndex) !== controller) {
+      return;
+    }
+
+    if (!document.body.contains(resultsSelect)) {
+      return;
+    }
+
+    renderSearchResults(resultsSelect, results);
+    if (status) {
+      status.textContent = results.length
+        ? `Found ${results.length} places. Choose one from dropdown.`
+        : 'No place found for that search.';
+    }
+  } catch (error) {
+    if (error && error.name === 'AbortError') {
+      return;
+    }
+    if (status) {
+      status.textContent = error.message || 'Location search failed.';
+    }
+  } finally {
+    if (inlineSearchControllers.get(stopIndex) === controller) {
+      inlineSearchControllers.delete(stopIndex);
+    }
+  }
+}
+
+function scheduleInlineStopSearch(stopIndex, query, resultsSelect, status) {
+  if (inlineSearchTimers.has(stopIndex)) {
+    clearTimeout(inlineSearchTimers.get(stopIndex));
+  }
+
+  const timerId = setTimeout(() => {
+    inlineSearchTimers.delete(stopIndex);
+    runInlineStopSearch(stopIndex, query, resultsSelect, status);
+  }, LOCATION_SEARCH_DEBOUNCE_MS);
+
+  inlineSearchTimers.set(stopIndex, timerId);
 }
 
 function setNewStopLocation(lat, lng) {
@@ -373,6 +552,7 @@ async function loadJourney() {
   const endName = currentJourney.spots.length ? currentJourney.spots[currentJourney.spots.length - 1].name : 'N/A';
   journeyRoute.textContent = `${currentJourney.route_summary || ''} Start: ${startName} | End: ${endName}`;
 
+  clearInlineSearchState();
   clearAllEditMarkers();
   await renderJourneyOnMap(currentJourney);
   renderStopsList(currentJourney.spots);
@@ -406,26 +586,18 @@ pickNewStopLocationBtn.addEventListener('click', () => {
   insertStopStatus.textContent = 'Click on the map to set the new stop location.';
 });
 
-searchNewStopBtn.addEventListener('click', async () => {
+searchNewStopBtn.addEventListener('click', () => {
+  runNewStopSearch(newStopSearchInput.value);
+});
+
+newStopSearchInput.addEventListener('input', () => {
   const query = newStopSearchInput.value.trim();
   if (!query) {
-    insertStopStatus.textContent = 'Type a place name before searching.';
+    cancelNewStopSearch();
+    resetSearchResults(newStopSearchResults);
     return;
   }
-
-  insertStopStatus.textContent = 'Searching places...';
-  try {
-    const results = await searchPlace(query);
-    if (!results.length) {
-      renderSearchResults(newStopSearchResults, []);
-      insertStopStatus.textContent = 'No place found for that search.';
-      return;
-    }
-    renderSearchResults(newStopSearchResults, results);
-    insertStopStatus.textContent = `Found ${results.length} places. Choose one from dropdown.`;
-  } catch (error) {
-    insertStopStatus.textContent = error.message || 'Location search failed.';
-  }
+  scheduleNewStopSearch(query);
 });
 
 newStopSearchResults.addEventListener('change', () => {
@@ -440,7 +612,6 @@ newStopSearchResults.addEventListener('change', () => {
   }
 
   setNewStopLocation(lat, lng);
-  map.setView([lat, lng], 13);
   insertStopStatus.textContent = 'Location selected from search.';
 });
 
@@ -486,6 +657,7 @@ stopsDetail.addEventListener('click', async (event) => {
     if (form) {
       form.classList.add('is-hidden');
     }
+    cancelInlineSearch(stopIndex);
     const status = card.querySelector('.inline-edit-status');
     if (status) {
       status.textContent = '';
@@ -507,32 +679,8 @@ stopsDetail.addEventListener('click', async (event) => {
     const queryInput = card.querySelector('.inline-location-search-input');
     const resultsSelect = card.querySelector('.inline-location-search-results');
     const status = card.querySelector('.inline-edit-status');
-
-    const query = queryInput ? queryInput.value.trim() : '';
-    if (!query) {
-      if (status) {
-        status.textContent = 'Type a place name before searching.';
-      }
-      return;
-    }
-
-    if (status) {
-      status.textContent = 'Searching places...';
-    }
-
-    try {
-      const results = await searchPlace(query);
-      renderSearchResults(resultsSelect, results);
-      if (status) {
-        status.textContent = results.length
-          ? `Found ${results.length} places. Choose one from dropdown.`
-          : 'No place found for that search.';
-      }
-    } catch (error) {
-      if (status) {
-        status.textContent = error.message || 'Location search failed.';
-      }
-    }
+    const query = queryInput ? queryInput.value : '';
+    runInlineStopSearch(stopIndex, query, resultsSelect, status);
     return;
   }
 
@@ -569,6 +717,37 @@ stopsDetail.addEventListener('click', async (event) => {
   }
 });
 
+stopsDetail.addEventListener('input', (event) => {
+  const queryInput = event.target.closest('.inline-location-search-input');
+  if (!queryInput) {
+    return;
+  }
+
+  const card = queryInput.closest('.stop-item');
+  if (!card) {
+    return;
+  }
+
+  const stopIndex = Number(card.dataset.stopIndex);
+  if (!Number.isInteger(stopIndex)) {
+    return;
+  }
+
+  const resultsSelect = card.querySelector('.inline-location-search-results');
+  const status = card.querySelector('.inline-edit-status');
+  const query = queryInput.value.trim();
+  if (!query) {
+    cancelInlineSearch(stopIndex);
+    resetSearchResults(resultsSelect);
+    if (status) {
+      status.textContent = '';
+    }
+    return;
+  }
+
+  scheduleInlineStopSearch(stopIndex, query, resultsSelect, status);
+});
+
 stopsDetail.addEventListener('change', (event) => {
   const resultsSelect = event.target.closest('.inline-location-search-results');
   if (!resultsSelect) {
@@ -587,7 +766,6 @@ stopsDetail.addEventListener('change', (event) => {
   }
 
   setInlineEditLocation(stopIndex, lat, lng);
-  map.setView([lat, lng], 13);
 });
 
 stopsDetail.addEventListener('submit', async (event) => {
@@ -747,6 +925,8 @@ insertStopForm.addEventListener('submit', async (event) => {
 
   insertStopStatus.textContent = 'Stop inserted successfully.';
   insertStopForm.reset();
+  cancelNewStopSearch();
+  resetSearchResults(newStopSearchResults);
   newStopLat.value = '';
   newStopLng.value = '';
   newStopLocationPreview.textContent = 'No map point selected';
