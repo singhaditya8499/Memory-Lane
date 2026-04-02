@@ -3,6 +3,11 @@ const addStopBtn = document.getElementById('addStopBtn');
 const journeyForm = document.getElementById('journeyForm');
 const statusMsg = document.getElementById('statusMsg');
 const timelineEl = document.getElementById('timeline');
+const tabAddJourneyBtn = document.getElementById('tabAddJourney');
+const tabPastJourneysBtn = document.getElementById('tabPastJourneys');
+const formPanel = document.getElementById('addJourneyPanel');
+const historyPanel = document.getElementById('historyPanel');
+const historyHeading = historyPanel ? historyPanel.querySelector('h2') : null;
 
 let stopCount = 0;
 let activeLocationStopIndex = null;
@@ -10,6 +15,9 @@ const LOCATION_SEARCH_DEBOUNCE_MS = 350;
 const MIN_LOCATION_QUERY_LENGTH = 2;
 const stopSearchTimers = new Map();
 const stopSearchControllers = new Map();
+let activeTab = 'add';
+let shouldRefreshTimeline = true;
+let timelineLoadToken = 0;
 
 const map = L.map('map').setView([20, 0], 2);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -21,7 +29,7 @@ const journeyLayers = [];
 const pickerMarkers = new Map();
 
 const timelineSearchBar = document.createElement('div');
-timelineSearchBar.className = 'timeline-search';
+timelineSearchBar.className = 'timeline-search history-only';
 timelineSearchBar.innerHTML = `
   <label>Search By Person
     <input id="personFilter" placeholder="Type a name and press Enter" />
@@ -189,6 +197,56 @@ function clearAllStopSearches() {
   stopSearchTimers.clear();
   stopSearchControllers.forEach((controller) => controller.abort());
   stopSearchControllers.clear();
+}
+
+function clearJourneyLayers() {
+  journeyLayers.forEach((layer) => map.removeLayer(layer));
+  journeyLayers.length = 0;
+}
+
+function updateTabUi(tab) {
+  const isAddTab = tab === 'add';
+
+  if (tabAddJourneyBtn) {
+    tabAddJourneyBtn.classList.toggle('active', isAddTab);
+    tabAddJourneyBtn.setAttribute('aria-selected', isAddTab ? 'true' : 'false');
+  }
+
+  if (tabPastJourneysBtn) {
+    tabPastJourneysBtn.classList.toggle('active', !isAddTab);
+    tabPastJourneysBtn.setAttribute('aria-selected', !isAddTab ? 'true' : 'false');
+  }
+
+  if (formPanel) {
+    formPanel.classList.toggle('is-hidden-panel', !isAddTab);
+  }
+
+  if (historyPanel) {
+    historyPanel.classList.toggle('is-add-mode', isAddTab);
+  }
+
+  if (historyHeading) {
+    historyHeading.textContent = isAddTab ? 'Stop Picker Map' : 'Journey Timeline Map';
+  }
+}
+
+async function setActiveTab(tab) {
+  activeTab = tab === 'history' ? 'history' : 'add';
+  updateTabUi(activeTab);
+
+  if (activeTab === 'add') {
+    timelineLoadToken += 1;
+    clearJourneyLayers();
+    shouldRefreshTimeline = true;
+    setTimeout(() => map.invalidateSize(), 0);
+    return;
+  }
+
+  if (shouldRefreshTimeline) {
+    await loadTimeline();
+  }
+
+  setTimeout(() => map.invalidateSize(), 0);
 }
 
 async function runStopLocationSearch(stopIndex, query) {
@@ -490,10 +548,14 @@ async function submitJourney(event) {
   addStop();
   markPickerActive(null);
   refreshStopRoleLabels();
-  await loadTimeline();
+  shouldRefreshTimeline = true;
+  if (activeTab === 'history') {
+    await loadTimeline();
+  }
 }
 
 async function loadTimeline() {
+  const currentToken = ++timelineLoadToken;
   const personQuery = personFilterInput.value.trim();
   const url = personQuery
     ? `/api/journeys?person=${encodeURIComponent(personQuery)}`
@@ -501,20 +563,32 @@ async function loadTimeline() {
 
   const listRes = await fetch(url);
   const journeys = await listRes.json();
+  if (currentToken !== timelineLoadToken) {
+    return;
+  }
 
-  journeyLayers.forEach((layer) => map.removeLayer(layer));
-  journeyLayers.length = 0;
+  clearJourneyLayers();
 
   timelineEl.innerHTML = '';
 
   const boundsPoints = [];
 
   for (const journey of journeys) {
+    if (currentToken !== timelineLoadToken) {
+      return;
+    }
+
     const detailRes = await fetch(`/api/journeys/${journey.id}`);
     const detail = await detailRes.json();
+    if (currentToken !== timelineLoadToken) {
+      return;
+    }
 
     const points = detail.spots.map((s) => [s.latitude, s.longitude]);
     const routePoints = await buildMapRoutePoints(points, detail.transport_mode);
+    if (currentToken !== timelineLoadToken) {
+      return;
+    }
     if (routePoints.length > 0) {
       const line = L.polyline(routePoints, { color: '#ca6702', weight: 4 }).addTo(map);
       journeyLayers.push(line);
@@ -547,6 +621,8 @@ async function loadTimeline() {
     `;
     timelineEl.appendChild(card);
   }
+
+  shouldRefreshTimeline = false;
 
   if (boundsPoints.length) {
     map.fitBounds(boundsPoints, { padding: [20, 20] });
@@ -643,10 +719,22 @@ personFilterInput.addEventListener('keydown', async (event) => {
   }
 });
 
+if (tabAddJourneyBtn) {
+  tabAddJourneyBtn.addEventListener('click', async () => {
+    await setActiveTab('add');
+  });
+}
+
+if (tabPastJourneysBtn) {
+  tabPastJourneysBtn.addEventListener('click', async () => {
+    await setActiveTab('history');
+  });
+}
+
 addStopBtn.addEventListener('click', addStop);
 journeyForm.addEventListener('submit', submitJourney);
 
 addStop();
 addStop();
 refreshStopRoleLabels();
-loadTimeline();
+setActiveTab('add');

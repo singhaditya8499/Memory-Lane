@@ -35,6 +35,27 @@ body {
   color: var(--muted);
 }
 
+.page-tabs {
+  display: flex;
+  gap: 0.55rem;
+  padding: 0.9rem 1rem 0;
+}
+
+.tab-btn {
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  border-radius: 10px;
+  padding: 0.55rem 0.85rem;
+  font-weight: 700;
+}
+
+.tab-btn.active {
+  border-color: #ca6702;
+  background: #fff4e8;
+  color: #7a2e00;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 1fr 1.2fr;
@@ -223,6 +244,19 @@ button {
   margin-bottom: 0.75rem;
 }
 
+.is-hidden-panel {
+  display: none;
+}
+
+.timeline-panel.is-add-mode .history-only,
+.timeline-panel.is-add-mode #timeline {
+  display: none;
+}
+
+.timeline-panel.is-add-mode #map {
+  height: 520px;
+}
+
 #timeline {
   margin-top: 0.75rem;
   max-height: 420px;
@@ -321,6 +355,10 @@ button {
 }
 
 @media (max-width: 980px) {
+  .page-tabs {
+    flex-wrap: wrap;
+  }
+
   .layout {
     grid-template-columns: 1fr;
   }

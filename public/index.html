@@ -21,8 +21,17 @@
       <p>Track trips, routes, people, and every stop in one timeline map.</p>
     </header>
 
+    <div class="page-tabs" role="tablist" aria-label="Journey Views">
+      <button type="button" id="tabAddJourney" class="tab-btn active" data-tab="add" role="tab" aria-selected="true">
+        Add Journey
+      </button>
+      <button type="button" id="tabPastJourneys" class="tab-btn" data-tab="history" role="tab" aria-selected="false">
+        Past Journeys
+      </button>
+    </div>
+
     <main class="layout">
-      <section class="panel form-panel">
+      <section class="panel form-panel" id="addJourneyPanel">
         <h2>Add Journey</h2>
         <form id="journeyForm">
           <label>Trip Title<input name="title" required /></label>
@@ -54,7 +63,7 @@
         </form>
       </section>
 
-      <section class="panel timeline-panel">
+      <section class="panel timeline-panel" id="historyPanel">
         <h2>Journey Timeline Map</h2>
         <div id="map"></div>
         <div id="timeline"></div>
